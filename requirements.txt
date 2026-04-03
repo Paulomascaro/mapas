@@ -1,0 +1,6 @@
+pandas
+openpyxl
+folium
+selenium
+webdriver-manager
+Pillow
