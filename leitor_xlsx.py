@@ -84,6 +84,6 @@ def listar_arquivos_entrada():
         
     arquivos = []
     for f in os.listdir(ENTRADA_DIR):
-        if f.endswith('.xlsx') and not f.startswith('~'):
+        if (f.endswith('.xlsx') or f.endswith('.xls')) and not f.startswith('~'):
             arquivos.append(os.path.join(ENTRADA_DIR, f))
     return arquivos

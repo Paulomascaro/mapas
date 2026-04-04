@@ -1,6 +1,8 @@
 import os
+import sys
 import time
-from leitor_xlsx import listar_arquivos_entrada, processar_planilha
+import json
+from leitor_xlsx import processar_planilha
 from mapa_osm import criar_mapa
 from config import SAIDA_DIR
 
@@ -11,37 +13,35 @@ from webdriver_manager.chrome import ChromeDriverManager
 import base64
 
 def html_para_pdf_imagem(caminho_html, nome_base):
-    """
-    Usa o Selenium para renderizar o HTML gerado e capturar um screenshot e exportar PDF.
-    """
-    # Prepara o caminho absoluto para o navegador ler (file:///)
     caminho_html_absoluto = f"file:///{os.path.abspath(caminho_html).replace(chr(92), '/')}"
     
     options = Options()
-    options.add_argument("--headless")  # Roda silenciosamente
-    # Alta resolução para garantir nitidez na plotagem
+    options.add_argument("--headless")
     options.add_argument("--window-size=2560,1440") 
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
+    
+    # Suprimir logs do selenium na saida padrao
+    options.add_experimental_option("excludeSwitches", ["enable-logging"])
 
     driver = None
+    caminho_png = os.path.join(SAIDA_DIR, f"{nome_base}.png")
+    caminho_pdf = os.path.join(SAIDA_DIR, f"{nome_base}.pdf")
+    
     try:
         service = ChromeService(executable_path=ChromeDriverManager().install())
+        
+        # Desabilita output do service
+        import subprocess
+        service.creation_flags = subprocess.CREATE_NO_WINDOW
+        
         driver = webdriver.Chrome(service=service, options=options)
         
-        # Carregar a página do mapa local
         driver.get(caminho_html_absoluto)
-        
-        # Aguardar 3 segundos até que os tiles do mapa OpenStreetMap terminem de carregar no navegador
         time.sleep(3)
         
-        # 1. Salvar como PNG em Alta Resolução
-        caminho_png = os.path.join(SAIDA_DIR, f"{nome_base}.png")
         driver.save_screenshot(caminho_png)
-        print(f"  [+] Imagem exportada com sucesso: {caminho_png}")
         
-        # 2. Salvar como PDF via Chrome Protocol
-        caminho_pdf = os.path.join(SAIDA_DIR, f"{nome_base}.pdf")
         pdf_options = {
             'landscape': True,
             'displayHeaderFooter': False,
@@ -52,10 +52,10 @@ def html_para_pdf_imagem(caminho_html, nome_base):
         
         with open(caminho_pdf, 'wb') as f:
             f.write(base64.b64decode(res['data']))
-        print(f"  [+] PDF exportado com sucesso: {caminho_pdf}")
-        
+            
+        return caminho_pdf, caminho_png
     except Exception as e:
-        print(f"  [-] Erro ao exportar PDF/Imagem via Selenium: {str(e)}")
+        raise Exception(f"Erro Selenium: {str(e)}")
     finally:
         if driver:
             try:
@@ -64,37 +64,41 @@ def html_para_pdf_imagem(caminho_html, nome_base):
                 pass
 
 def main():
-    print("=== Iniciando sistema de plotagem mapeada ===")
-    arquivos = listar_arquivos_entrada()
-    
-    if not arquivos:
-        print("\n[Aviso] Nenhum arquivo .xlsx encontrado na pasta 'dados_entrada/'.")
-        print("Adicione suas planilhas lá e rode o programa novamente.")
+    if len(sys.argv) < 2:
+        print(json.dumps({"status": "error", "message": "Nenhum arquivo fornecido."}))
         return
 
-    for caminho_arquivo in arquivos:
-        nome_arquivo = os.path.basename(caminho_arquivo)
-        nome_base = os.path.splitext(nome_arquivo)[0]
-        
-        print(f"\n>> Lendo o arquivo: {nome_arquivo}")
-        
-        # 1. Processar arquivo
+    caminho_arquivo = sys.argv[1]
+    
+    if not os.path.exists(caminho_arquivo):
+        print(json.dumps({"status": "error", "message": "Arquivo não encontrado."}))
+        return
+
+    nome_arquivo = os.path.basename(caminho_arquivo)
+    nome_base = os.path.splitext(nome_arquivo)[0]
+
+    try:
         dados = processar_planilha(caminho_arquivo)
         if not dados:
-            print(f"  [-] Nenhuma coordenada válida lida de {nome_arquivo}.")
-            continue
-            
-        print(f"  [*] {len(dados)} marcações encontradas.")
-        
-        # 2. Criar HTML com o mapa
+            print(json.dumps({"status": "error", "message": f"Nenhuma coordenada lida de {nome_arquivo}."}))
+            return
+
         caminho_html = criar_mapa(dados, nome_base)
-        print(f"  [*] Molde do mapa (HTML) montado.")
         
-        # 3. Exportar usando Selenium
-        print(f"  [*] Renderizando arquivo de alta resolução... Aguarde...")
-        html_para_pdf_imagem(caminho_html, nome_base)
+        caminho_pdf, caminho_png = html_para_pdf_imagem(caminho_html, nome_base)
         
-    print("\n=== Rotina concluída ===")
+        print(json.dumps({
+            "status": "success",
+            "nome_base": nome_base,
+            "html": caminho_html,
+            "pdf": caminho_pdf,
+            "png": caminho_png
+        }))
+        
+    except Exception as e:
+        print(json.dumps({"status": "error", "message": str(e)}))
 
 if __name__ == '__main__':
+    # Forçar stdout para utf-8
+    sys.stdout.reconfigure(encoding='utf-8')
     main()
